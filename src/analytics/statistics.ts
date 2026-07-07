@@ -7,15 +7,44 @@ export class StatisticsEngine {
 
 	writingFolder: string;
 
-	constructor(app: App, writingFolder: string) {
+	ignoredPaths: string[];
+
+	constructor(app: App, writingFolder: string, ignoredPaths: string[] = []) {
 		this.app = app;
 
 		this.writingFolder = writingFolder;
+
+		this.ignoredPaths = ignoredPaths;
 	}
 
 	/**
 	 * 清理文本后计算字数
 	 */
+
+	private normalizePath(path: string): string {
+		return path.replace(/^\/+|\/+$/g, '');
+	}
+
+	private isExcludedPath(path: string, excludedPaths: string[] = []) {
+		const normalizedPath = this.normalizePath(path);
+
+		const allExcludedPaths = [...new Set([...this.ignoredPaths, ...excludedPaths])];
+
+		return allExcludedPaths.some((excludedPath) => {
+			const normalizedExcludedPath = this.normalizePath(excludedPath);
+
+			if (!normalizedExcludedPath) {
+				return false;
+			}
+
+			return (
+				normalizedPath === normalizedExcludedPath ||
+				normalizedPath.startsWith(normalizedExcludedPath + '/') ||
+				normalizedPath.includes('/' + normalizedExcludedPath + '/') ||
+				normalizedPath.endsWith('/' + normalizedExcludedPath)
+			);
+		});
+	}
 
 	countWords(text: string): number {
 		return TextCounter.countMarkdown(text);
@@ -27,7 +56,7 @@ export class StatisticsEngine {
 		return this.countWords(text);
 	}
 
-	async scanFolder(folder: string) {
+	async scanFolder(folder: string, excludedPaths: string[] = []) {
 		const files = this.app.vault.getMarkdownFiles();
 
 		const result: {
@@ -36,6 +65,10 @@ export class StatisticsEngine {
 
 		for (const file of files) {
 			if (!file.path.startsWith(folder + '/')) {
+				continue;
+			}
+
+			if (this.isExcludedPath(file.path, excludedPaths)) {
 				continue;
 			}
 
@@ -126,7 +159,8 @@ export class StatisticsEngine {
 					folder === this.writingFolder ||
 					folder.startsWith(this.writingFolder + '/')
 				) {
-					folderCounts[folder] = (folderCounts[folder] ?? 0) + count;
+					folderCounts[folder] =
+						(folderCounts[folder] ?? 0) + (count ?? 0);
 				}
 
 				parts.pop();

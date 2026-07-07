@@ -1,22 +1,22 @@
-import { Plugin } from 'obsidian';
+import { MarkdownPostProcessorContext, Plugin } from 'obsidian';
 
-import { NovelDashboardData, DEFAULT_DATA } from './logic/saved-data';
+import { NovelDashboardData, DEFAULT_DATA } from './core/saved-data';
 
-import { DailyStatisticsManager } from './logic/daily-statistics';
+import { DailyStatisticsManager } from './analytics/daily-statistics';
 
-import { StatisticsEngine } from './logic/statistics';
+import { StatisticsEngine } from './analytics/statistics';
 
-import { ExplorerManager } from './logic/explorer';
+import { ExplorerManager } from './observers/explorer';
 
-import { EventManager } from './logic/event-manager';
+import { EventManager } from './observers/event-manager';
 
-import { WritingSession } from './logic/writing-session';
+import { WritingSession } from './observers/writing-session';
 
-import { FileEventManager } from './logic/file-event-manager';
+import { FileEventManager } from './observers/file-event-manager';
 
-import { NovelDashboardSettingTab } from './logic/settings';
+import { NovelDashboardSettingTab } from './core/settings';
 
-import { createWritingExtension } from './logic/writing-extension';
+import { createWritingExtension } from './observers/writing-extension';
 
 import { DashboardManager } from './dashboard/dashboard';
 
@@ -25,6 +25,8 @@ import { DashboardDataProvider } from './dashboard/dashboard-data';
 import { DashboardFileManager } from './dashboard/dashboard-file';
 
 import { DASHBOARD_VIEW_TYPE, DashboardView } from './dashboard/dashboard-view';
+
+import { HomepageRenderer } from './dashboard/homepage-renderer';
 
 export default class NovelDashboardPlugin extends Plugin {
 	data!: NovelDashboardData;
@@ -47,10 +49,94 @@ export default class NovelDashboardPlugin extends Plugin {
 
 	dashboardFile!: DashboardFileManager;
 
+	homepageRenderer!: HomepageRenderer;
+
 	private saveTimer: number | null = null;
 
 	get settings() {
 		return this.data.settings;
+	}
+
+	private inferWritingFolderFromCache(saved: any): string {
+		const candidates: string[] = [];
+
+		for (const file of saved?.recentFiles ?? []) {
+			if (file?.path) {
+				candidates.push(file.path);
+			}
+		}
+
+		for (const path of Object.keys(saved?.documentCounts ?? {})) {
+			candidates.push(path);
+		}
+
+		for (const path of Object.keys(saved?.folderCounts ?? {})) {
+			candidates.push(path);
+		}
+
+		for (const candidate of candidates) {
+			const normalized = candidate.replace(/^\/+|\/+$/g, '');
+
+			if (!normalized) {
+				continue;
+			}
+
+			const parts = normalized.split('/');
+
+			if (parts.length > 1) {
+				return parts[0] ?? DEFAULT_DATA.settings.writingFolder;
+			}
+		}
+
+		return DEFAULT_DATA.settings.writingFolder;
+	}
+
+	private getEffectiveWritingFolder(saved: any = this.data): string {
+		const configured = saved?.settings?.writingFolder?.trim();
+
+		if (configured) {
+			return configured;
+		}
+
+		return this.inferWritingFolderFromCache(saved);
+	}
+
+	getIgnoredPaths(): string[] {
+		const configured = this.data?.settings?.ignoredPaths ?? '';
+
+		const entries = configured
+			.split(',')
+			.map((entry) => entry.trim())
+			.filter(Boolean);
+
+		const allEntries = [
+			this.settings.dashboard.dashboardFilePath,
+			...entries,
+		]
+			.map((entry) => entry.trim())
+			.filter(Boolean)
+			.map((entry) => entry.replace(/^\/+|\/+$/g, ''));
+
+		return [...new Set(allEntries)];
+	}
+
+	isPathIgnored(path: string): boolean {
+		const normalizedPath = path.replace(/^\/+|\/+$/g, '');
+
+		return this.getIgnoredPaths().some((entry) => {
+			const normalizedEntry = entry.replace(/^\/+|\/+$/g, '');
+
+			if (!normalizedEntry) {
+				return false;
+			}
+
+			return (
+				normalizedPath === normalizedEntry ||
+				normalizedPath.startsWith(normalizedEntry + '/') ||
+				normalizedPath.includes('/' + normalizedEntry + '/') ||
+				normalizedPath.endsWith('/' + normalizedEntry)
+			);
+		});
 	}
 
 	async onload() {
@@ -59,6 +145,7 @@ export default class NovelDashboardPlugin extends Plugin {
 		this.statistics = new StatisticsEngine(
 			this.app,
 			this.settings.writingFolder,
+			this.getIgnoredPaths(),
 		);
 
 		this.dailyStatistics = new DailyStatisticsManager();
@@ -72,6 +159,8 @@ export default class NovelDashboardPlugin extends Plugin {
 		this.dashboardData = new DashboardDataProvider(this);
 
 		this.dashboardFile = new DashboardFileManager(this);
+
+		this.homepageRenderer = new HomepageRenderer(this);
 
 		/*
 			注册 Dashboard Sidebar
@@ -109,11 +198,7 @@ export default class NovelDashboardPlugin extends Plugin {
 		this.events.start();
 
 		this.app.workspace.onLayoutReady(async () => {
-			if (Object.keys(this.data.documentCounts).length === 0) {
-				await this.initializeCounts();
-			} else {
-				await this.restoreExplorerCounts();
-			}
+			await this.initializeCounts(true);
 
 			// 创建主页文档
 
@@ -125,6 +210,17 @@ export default class NovelDashboardPlugin extends Plugin {
 				await this.openDashboardSidebar();
 			}
 		});
+
+		this.registerMarkdownCodeBlockProcessor(
+			'webnovel-homepage',
+			(
+				source: string,
+				el: HTMLElement,
+				ctx: MarkdownPostProcessorContext,
+			) => {
+				this.homepageRenderer.render(source, el, ctx);
+			},
+		);
 
 		this.addSettingTab(new NovelDashboardSettingTab(this.app, this));
 
@@ -179,6 +275,8 @@ export default class NovelDashboardPlugin extends Plugin {
 	async loadPluginData() {
 		const saved = await this.loadData();
 
+		const effectiveWritingFolder = this.getEffectiveWritingFolder(saved);
+
 		this.data = {
 			...DEFAULT_DATA,
 
@@ -188,6 +286,8 @@ export default class NovelDashboardPlugin extends Plugin {
 				...DEFAULT_DATA.settings,
 
 				...(saved?.settings ?? {}),
+
+				writingFolder: effectiveWritingFolder,
 
 				dashboard: {
 					...DEFAULT_DATA.settings.dashboard,
@@ -235,8 +335,21 @@ export default class NovelDashboardPlugin extends Plugin {
 	}
 
 	async initializeCounts(manual = false) {
+		const ignoredPaths = this.getIgnoredPaths();
+
+		const writingFolder = this.getEffectiveWritingFolder(this.data);
+
+		this.data.settings.writingFolder = writingFolder;
+
+		this.statistics = new StatisticsEngine(
+			this.app,
+			writingFolder,
+			ignoredPaths,
+		);
+
 		const documentCounts = await this.statistics.scanFolder(
-			this.settings.writingFolder,
+			writingFolder,
+			ignoredPaths,
 		);
 
 		const folderCounts = this.statistics.calculateFolderCounts(

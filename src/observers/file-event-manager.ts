@@ -126,6 +126,15 @@ export class FileEventManager {
 			return;
 		}
 
+		if (this.plugin.isPathIgnored(path)) {
+			delete this.plugin.data.documentCounts[path];
+			this.plugin.dashboardFile.requestUpdate();
+			this.plugin.requestSave();
+			await this.rebuildFolderCounts();
+
+			return;
+		}
+
 		const content = await this.app.vault.read(file);
 
 		const count = this.plugin.statistics.countWords(content);
@@ -193,7 +202,25 @@ export class FileEventManager {
 	 * 删除文件
 	 */
 
+	private isDashboardFile(path: string): boolean {
+		const dashboardPath =
+			this.plugin.settings.dashboard.dashboardFilePath.replace(
+				/^\/+|\/+$/g,
+				'',
+			);
+		const normalizedPath = path.replace(/^\/+|\/+$/g, '');
+
+		return (
+			normalizedPath === dashboardPath ||
+			normalizedPath.endsWith('/' + dashboardPath)
+		);
+	}
+
 	removeFile(path: string) {
+		if (this.isDashboardFile(path)) {
+			return;
+		}
+
 		delete this.plugin.data.documentCounts[path];
 
 		this.plugin.data.recentFiles = this.plugin.data.recentFiles.filter(

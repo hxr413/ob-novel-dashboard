@@ -24,7 +24,7 @@ export class MonthlyCalendar {
 
 		*/
 
-		const firstDate = new Date(data[0].date);
+		const firstDate = new Date(data[0]?.date ?? new Date().toISOString());
 
 		const startDay = firstDate.getDay();
 

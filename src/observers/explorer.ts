@@ -3,6 +3,8 @@
 export class ExplorerManager {
 	app: any;
 
+	private pendingCounts: { [path: string]: number } = {};
+
 	constructor(app: any) {
 		this.app = app;
 	}
@@ -14,22 +16,26 @@ export class ExplorerManager {
 	/**
 	 * 获取 Obsidian 文件浏览器
 	 */
-	async getExplorer(): Promise<any> {
-		return new Promise((resolve, reject) => {
+	async getExplorer(retries = 6, delay = 150): Promise<any | null> {
+		for (let attempt = 0; attempt < retries; attempt++) {
 			const leaves = this.app.workspace.getLeavesOfType('file-explorer');
 
 			for (const leaf of leaves) {
 				const view = leaf.view as any;
 
 				if (view && view.fileItems) {
-					resolve(view);
-
-					return;
+					return view;
 				}
 			}
 
-			reject(new Error('File explorer not found'));
-		});
+			if (attempt < retries - 1) {
+				await new Promise((resolve) =>
+					window.setTimeout(resolve, delay),
+				);
+			}
+		}
+
+		return null;
 	}
 
 	/**
@@ -43,19 +49,61 @@ export class ExplorerManager {
 	 * }
 	 *
 	 */
+	private shouldHidePath(
+		path: string,
+		ignoredPaths: string[],
+		writingRoot: string,
+	) {
+		const normalizedPath = path.replace(/^\/+|\/+$/g, '');
+		const normalizedWritingRoot = writingRoot.replace(/^\/+|\/+$/g, '');
+
+		if (!normalizedWritingRoot) {
+			return false;
+		}
+
+		if (normalizedPath === normalizedWritingRoot) {
+			return false;
+		}
+
+		return ignoredPaths.some((ignoredPath) => {
+			const normalizedIgnoredPath = ignoredPath.replace(/^\/+|\/+$/g, '');
+
+			if (!normalizedIgnoredPath) {
+				return false;
+			}
+
+			return (
+				normalizedPath === normalizedIgnoredPath ||
+				normalizedPath.startsWith(normalizedIgnoredPath + '/') ||
+				normalizedIgnoredPath.startsWith(normalizedPath + '/')
+			);
+		});
+	}
+
 	async updateCounts(counts: { [path: string]: number }) {
+		const plugin = this.app.plugins?.plugins?.['ob-novel-dashboard'];
+		const ignoredPaths = plugin?.getIgnoredPaths?.() ?? [];
+		const writingRoot = plugin?.settings?.writingFolder?.trim() ?? '';
+
+		this.pendingCounts = {
+			...this.pendingCounts,
+			...counts,
+		};
+
 		const explorer = await this.getExplorer();
+
+		if (!explorer?.fileItems) {
+			return;
+		}
 
 		const fileItems = explorer.fileItems;
 
-		for (const path in fileItems) {
+		for (const path in this.pendingCounts) {
 			const item = fileItems[path];
 
-			const count = counts[path];
+			const count = this.pendingCounts[path];
 
-			// 没有统计数据跳过
-
-			if (count === undefined) {
+			if (count === undefined || !item) {
 				continue;
 			}
 
@@ -65,24 +113,35 @@ export class ExplorerManager {
 				continue;
 			}
 
+			if (this.shouldHidePath(path, ignoredPaths, writingRoot)) {
+				element.removeAttribute('data-novel-dashboard-count');
+				continue;
+			}
+
 			element.setAttribute(
 				'data-novel-dashboard-count',
 				this.formatCount(count),
 			);
 		}
+
+		this.pendingCounts = {};
 	}
 
 	/**
 	 * 实时更新单个文件
 	 */
 	async updateSingleFileCount(path: string, count: number) {
+		this.pendingCounts[path] = count;
+
 		const explorer = await this.getExplorer();
+
+		if (!explorer?.fileItems) {
+			return;
+		}
 
 		const item = explorer.fileItems[path];
 
 		if (!item) {
-			console.log('Explorer item not found:', path);
-
 			return;
 		}
 
@@ -96,6 +155,8 @@ export class ExplorerManager {
 			'data-novel-dashboard-count',
 			this.formatCount(count),
 		);
+
+		delete this.pendingCounts[path];
 	}
 
 	/**

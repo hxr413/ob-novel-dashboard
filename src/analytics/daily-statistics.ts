@@ -1,4 +1,4 @@
-import { NovelDashboardData } from './saved-data';
+import { NovelDashboardData } from '../core/saved-data';
 
 export class DailyStatisticsManager {
 	/**

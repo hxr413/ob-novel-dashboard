@@ -43,6 +43,32 @@ export class NovelDashboardSettingTab extends PluginSettingTab {
 			});
 
 		/*
+			忽略统计的文件 / 文件夹
+		*/
+
+		new Setting(containerEl)
+
+			.setName('Ignore files and folders')
+
+			.setDesc(
+				'Comma-separated file or folder paths to exclude from word counts. Example: 写作/大纲, Novel Dashboard.md',
+			)
+
+			.addText((text) => {
+				text.setPlaceholder('写作/大纲, Novel Dashboard.md')
+
+					.setValue(this.plugin.settings.ignoredPaths)
+
+					.onChange(async (value) => {
+						this.plugin.settings.ignoredPaths = value.trim();
+
+						await this.plugin.savePluginData();
+
+						await this.plugin.initializeCounts(true);
+					});
+			});
+
+		/*
 			Dashboard Sidebar
 		*/
 

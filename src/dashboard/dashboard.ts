@@ -1,4 +1,4 @@
-import { NovelDashboardData } from '../logic/saved-data';
+import { NovelDashboardData } from '../core/saved-data';
 
 export interface DashboardDailyItem {
 	date: string;

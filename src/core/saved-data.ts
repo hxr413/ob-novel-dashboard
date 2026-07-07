@@ -41,6 +41,8 @@ export interface NovelDashboardData {
 	settings: {
 		writingFolder: string;
 
+		ignoredPaths: string;
+
 		dashboard: DashboardSettings;
 	};
 
@@ -95,6 +97,8 @@ export interface NovelDashboardData {
 export const DEFAULT_DATA: NovelDashboardData = {
 	settings: {
 		writingFolder: '写作',
+
+		ignoredPaths: '',
 
 		dashboard: {
 			enableSidebar: true,

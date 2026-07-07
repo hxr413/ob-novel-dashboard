@@ -269,6 +269,86 @@
 
 /* ========== 主页 md ========== */
 
+.novel-homepage-root {
+	display: flex;
+	flex-direction: column;
+	gap: 14px;
+}
+
+.novel-homepage-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+	gap: 12px;
+}
+
+.novel-homepage-card {
+	padding: 14px;
+	border-radius: 12px;
+	background: linear-gradient(
+		135deg,
+		var(--background-secondary) 0%,
+		var(--background-secondary-alt) 100%
+	);
+	border: 1px solid var(--background-modifier-border);
+	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+}
+
+.novel-homepage-card-value {
+	font-size: 22px;
+	font-weight: 700;
+	color: var(--text-normal);
+}
+
+.novel-homepage-card-label {
+	margin-top: 6px;
+	font-size: 13px;
+	color: var(--text-muted);
+}
+
+.novel-homepage-section {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.novel-homepage-section-title {
+	margin: 0;
+	font-size: 14px;
+	color: var(--text-muted);
+}
+
+.novel-homepage-list {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.novel-homepage-list-item,
+.novel-homepage-empty {
+	padding: 10px 12px;
+	border-radius: 8px;
+	background: var(--background-secondary);
+	border: 1px solid var(--background-modifier-border);
+	color: var(--text-normal);
+}
+
+.novel-homepage-table {
+	width: 100%;
+	border-collapse: collapse;
+}
+
+.novel-homepage-table th,
+.novel-homepage-table td {
+	padding: 8px 6px;
+	text-align: left;
+	border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.novel-homepage-table th {
+	color: var(--text-muted);
+	font-size: 12px;
+}
+
 .novel-dashboard-grid {
 	display: grid;
 

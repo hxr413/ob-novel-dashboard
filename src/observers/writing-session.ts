@@ -1,6 +1,6 @@
 import { App } from 'obsidian';
 import { TextCounter } from '../utils/text-counter';
-import { NovelDashboardData } from './saved-data';
+import { NovelDashboardData } from '../core/saved-data';
 import { ViewUpdate } from '@codemirror/view';
 import { Transaction } from '@codemirror/state';
 
@@ -49,6 +49,10 @@ export class WritingSession {
 		}
 
 		const transaction = update.transactions[0];
+
+		if (!transaction) {
+			return;
+		}
 
 		const userEvent = transaction.annotation(Transaction.userEvent);
 
