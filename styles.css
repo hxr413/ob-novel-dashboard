@@ -1,8 +1,322 @@
+/* 左侧边栏样式 */
+
+.tree-item-inner {
+	display: flex;
+	align-items: center;
+}
+
+[data-novel-dashboard-count]::after {
+	content: attr(data-novel-dashboard-count);
+	margin-left: auto;
+	opacity: 0.6;
+	font-size: 0.8em;
+	padding-left: 12px;
+}
+
+/* Dashboard 卡片 */
+
+.novel-dashboard-stats {
+	display: grid;
+
+	grid-template-columns: repeat(3, 1fr);
+
+	gap: 12px;
+
+	margin-bottom: 20px;
+}
+
+.novel-dashboard-card {
+	padding: 16px;
+
+	border-radius: 12px;
+
+	background: var(--background-secondary);
+
+	text-align: center;
+}
+
+.novel-dashboard-card-value {
+	font-size: 28px;
+
+	font-weight: bold;
+}
+
+.novel-dashboard-card-label {
+	margin-top: 6px;
+
+	color: var(--text-muted);
+
+	font-size: 13px;
+}
+
+/* Dashboard 柱状图 */
+.novel-dashboard-chart-container {
+	width: 100%;
+}
+
+.novel-dashboard-chart {
+	width: 100%;
+	height: 180px;
+}
+
+/* Dashboard 月历 */
+.novel-dashboard-calendar {
+	display: grid;
+
+	grid-template-columns: repeat(7, 1fr);
+
+	gap: 6px;
+}
+
+.calendar-weekday {
+	text-align: center;
+
+	font-size: 12px;
+
+	color: var(--text-muted);
+}
+
+.calendar-day,
+.calendar-empty {
+	min-height: 65px;
+
+	padding: 6px;
+
+	border-radius: 8px;
+}
+
+.calendar-day {
+	background: var(--background-secondary);
+}
+
+.calendar-date {
+	font-size: 14px;
+}
+
+.calendar-words {
+	margin-top: 8px;
+
+	font-size: 12px;
+
+	color: var(--text-muted);
+}
+
+/* 今天 */
+.calendar-day.today {
+	outline: 2px solid var(--interactive-accent);
+}
+
+/* Heatmap 使用 Obsidian 主题变量 */
+.calendar-day.heat-1 {
+	background: color-mix(
+		in srgb,
+		var(--interactive-accent) 20%,
+		var(--background-secondary)
+	);
+}
+
+.calendar-day.heat-2 {
+	background: color-mix(
+		in srgb,
+		var(--interactive-accent) 40%,
+		var(--background-secondary)
+	);
+}
+
+.calendar-day.heat-3 {
+	background: color-mix(
+		in srgb,
+		var(--interactive-accent) 60%,
+		var(--background-secondary)
+	);
+}
+
+.calendar-day.heat-4 {
+	background: color-mix(
+		in srgb,
+		var(--interactive-accent) 80%,
+		var(--background-secondary)
+	);
+}
+
+/* Dashboard 热力图 */
+.novel-dashboard-heatmap {
+	display: grid;
+
+	grid-template-rows: repeat(7, 12px);
+
+	grid-auto-flow: column;
+
+	grid-auto-columns: 12px;
+
+	gap: 4px;
+
+	margin-top: 10px;
+}
+
+.heatmap-day {
+	width: 12px;
+
+	height: 12px;
+
+	border-radius: 3px;
+
+	background: var(--background-modifier-border);
+}
+
 /*
-
-This CSS file will be included with your plugin, and
-available in the app when your plugin is enabled.
-
-If your plugin does not need CSS, delete this file.
+	写作强度
 
 */
+
+.heatmap-day.heat-1 {
+	background: color-mix(
+		in srgb,
+		var(--interactive-accent) 25%,
+		var(--background-secondary)
+	);
+}
+
+.heatmap-day.heat-2 {
+	background: color-mix(
+		in srgb,
+		var(--interactive-accent) 45%,
+		var(--background-secondary)
+	);
+}
+
+.heatmap-day.heat-3 {
+	background: color-mix(
+		in srgb,
+		var(--interactive-accent) 65%,
+		var(--background-secondary)
+	);
+}
+
+.heatmap-day.heat-4 {
+	background: color-mix(
+		in srgb,
+		var(--interactive-accent) 85%,
+		var(--background-secondary)
+	);
+}
+
+/* 右侧边栏样式 */
+
+.novel-dashboard {
+	padding: 20px;
+}
+
+.novel-dashboard-cards {
+	display: grid;
+
+	grid-template-columns: repeat(3, 1fr);
+
+	gap: 12px;
+
+	margin-bottom: 20px;
+}
+
+.novel-dashboard-card {
+	padding: 16px;
+
+	border-radius: 12px;
+
+	background: var(--background-secondary);
+}
+
+.card-title {
+	color: var(--text-muted);
+
+	font-size: 12px;
+}
+
+.card-value {
+	display: block;
+
+	font-size: 24px;
+
+	margin-top: 8px;
+}
+
+.novel-dashboard-section-title {
+	margin-top: 28px;
+
+	margin-bottom: 12px;
+}
+
+.novel-dashboard-recent {
+	display: flex;
+
+	flex-direction: column;
+
+	gap: 6px;
+}
+
+.novel-dashboard-file {
+	padding: 8px;
+
+	border-radius: 8px;
+
+	cursor: pointer;
+
+	background: var(--background-secondary);
+}
+
+.novel-dashboard-file:hover {
+	background: var(--background-modifier-hover);
+}
+
+/* ========== 主页 md ========== */
+
+.novel-dashboard-grid {
+	display: grid;
+
+	grid-template-columns: repeat(3, 1fr);
+
+	gap: 12px;
+
+	margin-bottom: 20px;
+}
+
+.novel-card {
+	padding: 16px;
+
+	border-radius: 12px;
+
+	background: var(--background-secondary);
+}
+
+.novel-value {
+	font-size: 28px;
+
+	font-weight: 700;
+
+	color: var(--text-normal);
+}
+
+.novel-label {
+	margin-top: 8px;
+
+	font-size: 13px;
+
+	color: var(--text-muted);
+}
+
+.novel-list {
+	display: flex;
+
+	flex-direction: column;
+
+	gap: 8px;
+}
+
+.novel-list-item {
+	padding: 10px;
+
+	border-radius: 8px;
+
+	background: var(--background-secondary);
+
+	color: var(--text-normal);
+}

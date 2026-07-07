@@ -1,114 +1,283 @@
-import {
-	Editor,
-	MarkdownView,
-	MarkdownFileInfo,
-	Modal,
-	Notice,
-	Plugin,
-} from 'obsidian';
-import {
-	DEFAULT_SETTINGS,
-	MyPluginSettings,
-	SampleSettingTab,
-} from './settings';
+import { Plugin } from 'obsidian';
 
-// Remember to rename these classes and interfaces!
+import { NovelDashboardData, DEFAULT_DATA } from './logic/saved-data';
 
-export default class MyPlugin extends Plugin {
-	settings!: MyPluginSettings;
+import { DailyStatisticsManager } from './logic/daily-statistics';
+
+import { StatisticsEngine } from './logic/statistics';
+
+import { ExplorerManager } from './logic/explorer';
+
+import { EventManager } from './logic/event-manager';
+
+import { WritingSession } from './logic/writing-session';
+
+import { FileEventManager } from './logic/file-event-manager';
+
+import { NovelDashboardSettingTab } from './logic/settings';
+
+import { createWritingExtension } from './logic/writing-extension';
+
+import { DashboardManager } from './dashboard/dashboard';
+
+import { DashboardDataProvider } from './dashboard/dashboard-data';
+
+import { DashboardFileManager } from './dashboard/dashboard-file';
+
+import { DASHBOARD_VIEW_TYPE, DashboardView } from './dashboard/dashboard-view';
+
+export default class NovelDashboardPlugin extends Plugin {
+	data!: NovelDashboardData;
+
+	statistics!: StatisticsEngine;
+
+	dailyStatistics!: DailyStatisticsManager;
+
+	explorer!: ExplorerManager;
+
+	events!: EventManager;
+
+	writingSession!: WritingSession;
+
+	fileEvents!: FileEventManager;
+
+	dashboard!: DashboardManager;
+
+	dashboardData!: DashboardDataProvider;
+
+	dashboardFile!: DashboardFileManager;
+
+	private saveTimer: number | null = null;
+
+	get settings() {
+		return this.data.settings;
+	}
 
 	async onload() {
-		await this.loadSettings();
+		await this.loadPluginData();
 
-		// This creates an icon in the left ribbon.
-		this.addRibbonIcon('dice', 'Sample', (_evt: MouseEvent) => {
-			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
-		});
-
-		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status bar text');
-
-		// This adds a simple command that can be triggered anywhere
-		this.addCommand({
-			id: 'open-modal-simple',
-			name: 'Open modal (simple)',
-			callback: () => {
-				new SampleModal(this.app).open();
-			},
-		});
-		// This adds an editor command that can perform some operation on the current editor instance
-		this.addCommand({
-			id: 'replace-selected',
-			name: 'Replace selected content',
-			editorCallback: (
-				editor: Editor,
-				_ctx: MarkdownView | MarkdownFileInfo,
-			) => {
-				editor.replaceSelection('Sample editor command');
-			},
-		});
-		// This adds a complex command that can check whether the current state of the app allows execution of the command
-		this.addCommand({
-			id: 'open-modal-complex',
-			name: 'Open modal (complex)',
-			checkCallback: (checking: boolean) => {
-				// Conditions to check
-				const markdownView =
-					this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
-					// If checking is true, we're simply "checking" if the command can be run.
-					// If checking is false, then we want to actually perform the operation.
-					if (!checking) {
-						new SampleModal(this.app).open();
-					}
-
-					// This command will only show up in Command Palette when the check function returns true
-					return true;
-				}
-				return false;
-			},
-		});
-
-		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new SampleSettingTab(this.app, this));
-
-		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(activeDocument, 'click', (_evt: MouseEvent) => {
-			new Notice('Click');
-		});
-
-		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-		this.registerInterval(
-			window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000),
+		this.statistics = new StatisticsEngine(
+			this.app,
+			this.settings.writingFolder,
 		);
-	}
 
-	onunload() {}
+		this.dailyStatistics = new DailyStatisticsManager();
 
-	async loadSettings() {
-		this.settings = Object.assign(
-			{},
-			DEFAULT_SETTINGS,
-			(await this.loadData()) as Partial<MyPluginSettings>,
+		this.explorer = new ExplorerManager(this.app);
+
+		this.writingSession = new WritingSession(this.app, this.data);
+
+		this.dashboard = new DashboardManager(this.data);
+
+		this.dashboardData = new DashboardDataProvider(this);
+
+		this.dashboardFile = new DashboardFileManager(this);
+
+		/*
+			注册 Dashboard Sidebar
+		*/
+
+		this.registerView(
+			DASHBOARD_VIEW_TYPE,
+			(leaf) => new DashboardView(leaf, this),
 		);
+
+		/*
+			Writing
+		*/
+
+		this.writingSession.onSaveRequested = () => {
+			this.requestSave();
+
+			this.dashboardFile.requestUpdate();
+		};
+
+		this.writingSession.start();
+
+		this.registerEditorExtension(createWritingExtension(this));
+
+		/*
+			File Events
+		*/
+
+		this.fileEvents = new FileEventManager(this.app, this);
+
+		this.fileEvents.start();
+
+		this.events = new EventManager(this.app);
+
+		this.events.start();
+
+		this.app.workspace.onLayoutReady(async () => {
+			if (Object.keys(this.data.documentCounts).length === 0) {
+				await this.initializeCounts();
+			} else {
+				await this.restoreExplorerCounts();
+			}
+
+			// 创建主页文档
+
+			await this.dashboardFile.initialize();
+
+			// 自动打开侧边栏
+
+			if (this.settings.dashboard.enableSidebar) {
+				await this.openDashboardSidebar();
+			}
+		});
+
+		this.addSettingTab(new NovelDashboardSettingTab(this.app, this));
+
+		this.addCommand({
+			id: 'scan-writing-folder',
+
+			name: 'Scan Writing Folder',
+
+			callback: async () => {
+				await this.initializeCounts(true);
+			},
+		});
+
+		this.addCommand({
+			id: 'open-novel-dashboard-sidebar',
+			name: 'Open Novel Dashboard Sidebar',
+
+			callback: async () => {
+				await this.openDashboardSidebar();
+			},
+		});
+
+		console.log('Novel Dashboard loaded');
 	}
 
-	async saveSettings() {
-		await this.saveData(this.settings);
-	}
-}
+	async openDashboardSidebar() {
+		const leaf = this.app.workspace.getRightLeaf(false);
 
-class SampleModal extends Modal {
-	onOpen() {
-		const { contentEl } = this;
-		contentEl.setText('Woah!');
+		if (!leaf) {
+			console.warn('Cannot create dashboard sidebar');
+
+			return;
+		}
+
+		await leaf.setViewState({
+			type: DASHBOARD_VIEW_TYPE,
+
+			active: true,
+		});
+
+		this.app.workspace.revealLeaf(leaf);
 	}
 
-	onClose() {
-		const { contentEl } = this;
-		contentEl.empty();
+	async closeDashboardSidebar() {
+		const leaves = this.app.workspace.getLeavesOfType(DASHBOARD_VIEW_TYPE);
+
+		for (const leaf of leaves) {
+			await leaf.detach();
+		}
+	}
+
+	async loadPluginData() {
+		const saved = await this.loadData();
+
+		this.data = {
+			...DEFAULT_DATA,
+
+			...saved,
+
+			settings: {
+				...DEFAULT_DATA.settings,
+
+				...(saved?.settings ?? {}),
+
+				dashboard: {
+					...DEFAULT_DATA.settings.dashboard,
+
+					...(saved?.settings?.dashboard ?? {}),
+				},
+			},
+
+			documentCounts: {
+				...DEFAULT_DATA.documentCounts,
+
+				...(saved?.documentCounts ?? {}),
+			},
+
+			folderCounts: {
+				...DEFAULT_DATA.folderCounts,
+
+				...(saved?.folderCounts ?? {}),
+			},
+
+			previousDocumentCounts: {
+				...DEFAULT_DATA.previousDocumentCounts,
+
+				...(saved?.previousDocumentCounts ?? {}),
+			},
+
+			dailyStats: {
+				...DEFAULT_DATA.dailyStats,
+
+				...(saved?.dailyStats ?? {}),
+			},
+		};
+	}
+
+	requestSave() {
+		if (this.saveTimer) {
+			window.clearTimeout(this.saveTimer);
+		}
+
+		this.saveTimer = window.setTimeout(async () => {
+			await this.savePluginData();
+
+			this.saveTimer = null;
+		}, 3000);
+	}
+
+	async initializeCounts(manual = false) {
+		const documentCounts = await this.statistics.scanFolder(
+			this.settings.writingFolder,
+		);
+
+		const folderCounts = this.statistics.calculateFolderCounts(
+			documentCounts,
+			this.statistics.getFolderPaths(),
+		);
+
+		if (manual) {
+			this.dailyStatistics.updateDailyWords(this.data, documentCounts);
+		}
+
+		this.data.documentCounts = documentCounts;
+
+		this.data.folderCounts = folderCounts;
+
+		await this.explorer.updateCounts(documentCounts);
+
+		await this.explorer.updateCounts(folderCounts);
+
+		await this.savePluginData();
+	}
+
+	async restoreExplorerCounts() {
+		await this.explorer.updateCounts(this.data.documentCounts);
+
+		await this.explorer.updateCounts(this.data.folderCounts);
+	}
+
+	async savePluginData() {
+		await this.saveData(this.data);
+	}
+
+	async onunload() {
+		if (this.saveTimer) {
+			window.clearTimeout(this.saveTimer);
+		}
+
+		await this.savePluginData();
+
+		this.writingSession?.stop();
+
+		console.log('Novel Dashboard unloaded');
 	}
 }
