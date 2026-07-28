@@ -1,5 +1,4 @@
 import { App } from 'obsidian';
-import { TextCounter } from '../utils/text-counter';
 import { NovelDashboardData } from '../core/saved-data';
 import { ViewUpdate } from '@codemirror/view';
 import { Transaction } from '@codemirror/state';
@@ -13,12 +12,18 @@ export class WritingSession {
 
 	lastTypingTime = 0;
 
+	private ignoreExternalInputUntil = 0;
+
+	private isComposing = false;
+
 	/**
 	 * 请求保存
 	 *
 	 * 由 main.ts 提供 debounce save
 	 */
 	onSaveRequested?: () => void;
+
+	onStatsChanged?: () => void;
 
 	constructor(app: App, data: NovelDashboardData) {
 		this.app = app;
@@ -38,6 +43,20 @@ export class WritingSession {
 		}
 	}
 
+	ignoreNextInputChange() {
+		this.ignoreExternalInputUntil = Date.now() + 1000;
+	}
+
+	beginComposition() {
+		this.isComposing = true;
+	}
+
+	endComposition() {
+		window.setTimeout(() => {
+			this.isComposing = false;
+		}, 0);
+	}
+
 	/**
 	 * CodeMirror 输入事件
 	 *
@@ -48,15 +67,20 @@ export class WritingSession {
 			return;
 		}
 
-		const transaction = update.transactions[0];
-
-		if (!transaction) {
+		if (
+			(this.isComposing || update.view.composing) &&
+			!this.hasInsertedCjk(update)
+		) {
 			return;
 		}
 
-		const userEvent = transaction.annotation(Transaction.userEvent);
+		const userEvents = update.transactions
+			.map((transaction) =>
+				transaction.annotation(Transaction.userEvent),
+			)
+			.filter((event): event is string => Boolean(event));
 
-		console.log('Writing event:', userEvent);
+		console.log('Writing event:', userEvents);
 
 		/*
 			忽略：
@@ -68,12 +92,19 @@ export class WritingSession {
 		*/
 
 		if (
-			!userEvent ||
-			userEvent.startsWith('delete') ||
-			userEvent.startsWith('input.paste') ||
-			userEvent.startsWith('undo') ||
-			userEvent.startsWith('redo')
+			userEvents.some(
+				(userEvent) =>
+					userEvent.startsWith('delete') ||
+					userEvent.startsWith('input.paste') ||
+					userEvent.startsWith('input.drop') ||
+					userEvent.startsWith('undo') ||
+					userEvent.startsWith('redo'),
+			)
 		) {
+			return;
+		}
+
+		if (userEvents.length === 0 && Date.now() < this.ignoreExternalInputUntil) {
 			return;
 		}
 
@@ -82,29 +113,88 @@ export class WritingSession {
 
 			input.type
 			input.compose
+			input
 		*/
 
-		if (userEvent !== 'input.type' && userEvent !== 'input.compose') {
+		const isWritingInput =
+			userEvents.length === 0 ||
+			userEvents.some(
+				(userEvent) =>
+					userEvent === 'input' ||
+					userEvent.startsWith('input.type') ||
+					userEvent.startsWith('input.compose'),
+			);
+
+		if (!isWritingInput) {
 			return;
 		}
 
-		let insertedText = '';
-
-		update.changes.iterChanges((_fromA, _fromB, _fromC, _fromD, insert) => {
-			insertedText += insert.toString();
-		});
-
-		if (!insertedText) {
-			return;
-		}
-
-		const count = TextCounter.count(insertedText);
+		const count = this.countInsertedWords(update);
 
 		if (count <= 0) {
 			return;
 		}
 
 		this.addWritingWords(count);
+	}
+
+	private countInsertedWords(update: ViewUpdate): number {
+		let count = 0;
+
+		update.changes.iterChanges((_fromA, _toA, fromB, _toB, insert) => {
+			const insertedText = insert.toString();
+
+			for (let offset = 0; offset < insertedText.length; offset++) {
+				const char = insertedText[offset] ?? '';
+				const absolutePosition = fromB + offset;
+
+				if (this.isCjk(char)) {
+					count += 1;
+
+					continue;
+				}
+
+				if (!this.isAsciiWordChar(char)) {
+					continue;
+				}
+
+				const previousChar =
+					absolutePosition > 0
+						? update.state.sliceDoc(
+								absolutePosition - 1,
+								absolutePosition,
+							)
+						: '';
+
+				if (!this.isAsciiWordChar(previousChar)) {
+					count += 1;
+				}
+			}
+		});
+
+		return count;
+	}
+
+	private hasInsertedCjk(update: ViewUpdate): boolean {
+		let hasCjk = false;
+
+		update.changes.iterChanges((_fromA, _toA, _fromB, _toB, insert) => {
+			if (this.isCjk(insert.toString())) {
+				hasCjk = true;
+			}
+		});
+
+		return hasCjk;
+	}
+
+	private isCjk(char: string): boolean {
+		return /[\u3400-\u4DBF\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF]/.test(
+			char,
+		);
+	}
+
+	private isAsciiWordChar(char: string): boolean {
+		return /[A-Za-z0-9_]/.test(char);
 	}
 
 	/**
@@ -137,6 +227,8 @@ export class WritingSession {
 
 		console.log('Writing added:', count);
 
+		this.onStatsChanged?.();
+
 		/*
 			触发 debounce 保存
 
@@ -160,6 +252,8 @@ export class WritingSession {
 
 				if (stat) {
 					stat.duration += 1;
+
+					this.onStatsChanged?.();
 				}
 			}
 		}, 1000);

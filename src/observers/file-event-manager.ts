@@ -54,6 +54,8 @@ export class FileEventManager {
 						*/
 
 					await this.rebuildFolderCounts();
+
+					this.plugin.requestDashboardRefresh();
 				}
 			}),
 		);
@@ -65,14 +67,18 @@ export class FileEventManager {
 		this.plugin.registerEvent(
 			this.app.vault.on('delete', async (file) => {
 				if (file instanceof TFile) {
+					await this.plugin.explorer.clearPathCount(file.path);
 					this.removeFile(file.path);
 				} else if (file instanceof TFolder) {
+					this.plugin.explorer.clearCounts();
 					this.removeFolder(file.path);
 				}
 
 				await this.rebuildFolderCounts();
 
 				this.plugin.dashboardFile.requestUpdate();
+
+				this.plugin.requestDashboardRefresh();
 
 				this.plugin.requestSave();
 			}),
@@ -86,11 +92,19 @@ export class FileEventManager {
 		this.plugin.registerEvent(
 			this.app.vault.on('rename', async (file, oldPath) => {
 				if (file instanceof TFile) {
+					const wasTracked =
+						this.plugin.data.documentCounts[oldPath] !== undefined;
+
 					/*
 							删除旧缓存
 						*/
 
 					this.removeFile(oldPath);
+
+					await this.plugin.explorer.clearPathCounts([
+						oldPath,
+						file.path,
+					]);
 
 					/*
 							重新计算新路径
@@ -99,6 +113,22 @@ export class FileEventManager {
 
 					if (file.extension === 'md') {
 						await this.updateFile(file);
+					}
+
+					if (
+						wasTracked &&
+						(!file.path.startsWith(
+							this.plugin.settings.writingFolder + '/',
+						) ||
+							this.plugin.isPathIgnored(file.path))
+					) {
+						await this.rebuildFolderCounts();
+
+						this.plugin.dashboardFile.requestUpdate();
+
+						this.plugin.requestDashboardRefresh();
+
+						this.plugin.requestSave();
 					}
 				} else if (file instanceof TFolder) {
 					/*
@@ -109,7 +139,13 @@ export class FileEventManager {
 							直接重新扫描缓存结构
 						*/
 
-					await this.rebuildFolderCounts();
+					this.plugin.explorer.clearCounts();
+
+					await this.plugin.initializeCounts(false);
+
+					this.plugin.dashboardFile.requestUpdate();
+
+					this.plugin.requestDashboardRefresh();
 				}
 			}),
 		);
@@ -123,12 +159,16 @@ export class FileEventManager {
 		const path = file.path;
 
 		if (!path.startsWith(this.plugin.settings.writingFolder + '/')) {
+			await this.plugin.explorer.clearPathCount(path);
+
 			return;
 		}
 
 		if (this.plugin.isPathIgnored(path)) {
 			delete this.plugin.data.documentCounts[path];
+			await this.plugin.explorer.clearPathCount(path);
 			this.plugin.dashboardFile.requestUpdate();
+			this.plugin.requestDashboardRefresh();
 			this.plugin.requestSave();
 			await this.rebuildFolderCounts();
 
@@ -167,6 +207,8 @@ export class FileEventManager {
 		*/
 
 		this.plugin.dashboardFile.requestUpdate();
+
+		this.plugin.requestDashboardRefresh();
 
 		/*
 			debounce 保存

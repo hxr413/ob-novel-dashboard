@@ -1,4 +1,4 @@
-import { MarkdownPostProcessorContext } from 'obsidian';
+import { MarkdownPostProcessorContext, MarkdownRenderChild } from 'obsidian';
 
 import NovelDashboardPlugin from '../main';
 
@@ -9,6 +9,8 @@ export class HomepageRenderer {
 
 	provider: DashboardDataProvider;
 
+	private children = new Set<HomepageRenderChild>();
+
 	constructor(plugin: NovelDashboardPlugin) {
 		this.plugin = plugin;
 
@@ -18,8 +20,28 @@ export class HomepageRenderer {
 	render(
 		_source: string,
 		container: HTMLElement,
-		_context: MarkdownPostProcessorContext,
+		context: MarkdownPostProcessorContext,
 	) {
+		const child = new HomepageRenderChild(this, container);
+
+		this.children.add(child);
+
+		context.addChild(child);
+
+		child.render();
+	}
+
+	refresh() {
+		for (const child of this.children) {
+			child.render();
+		}
+	}
+
+	removeChild(child: HomepageRenderChild) {
+		this.children.delete(child);
+	}
+
+	renderContent(container: HTMLElement) {
 		container.empty();
 
 		const summary = this.provider.getSummary();
@@ -124,5 +146,23 @@ export class HomepageRenderer {
 		}
 
 		return `${minutes}m`;
+	}
+}
+
+class HomepageRenderChild extends MarkdownRenderChild {
+	renderer: HomepageRenderer;
+
+	constructor(renderer: HomepageRenderer, container: HTMLElement) {
+		super(container);
+
+		this.renderer = renderer;
+	}
+
+	render() {
+		this.renderer.renderContent(this.containerEl);
+	}
+
+	onunload() {
+		this.renderer.removeChild(this);
 	}
 }

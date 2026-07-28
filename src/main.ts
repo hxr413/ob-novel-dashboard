@@ -53,6 +53,8 @@ export default class NovelDashboardPlugin extends Plugin {
 
 	private saveTimer: number | null = null;
 
+	private dashboardRefreshTimer: number | null = null;
+
 	get settings() {
 		return this.data.settings;
 	}
@@ -179,6 +181,10 @@ export default class NovelDashboardPlugin extends Plugin {
 			this.requestSave();
 
 			this.dashboardFile.requestUpdate();
+		};
+
+		this.writingSession.onStatsChanged = () => {
+			this.requestDashboardRefresh();
 		};
 
 		this.writingSession.start();
@@ -334,6 +340,32 @@ export default class NovelDashboardPlugin extends Plugin {
 		}, 3000);
 	}
 
+	requestDashboardRefresh() {
+		if (this.dashboardRefreshTimer) {
+			window.clearTimeout(this.dashboardRefreshTimer);
+		}
+
+		this.dashboardRefreshTimer = window.setTimeout(() => {
+			void this.refreshDashboardViews();
+
+			this.homepageRenderer.refresh();
+
+			this.dashboardRefreshTimer = null;
+		}, 100);
+	}
+
+	async refreshDashboardViews() {
+		const leaves = this.app.workspace.getLeavesOfType(DASHBOARD_VIEW_TYPE);
+
+		for (const leaf of leaves) {
+			const view = leaf.view;
+
+			if (view instanceof DashboardView) {
+				await view.render();
+			}
+		}
+	}
+
 	async initializeCounts(manual = false) {
 		const ignoredPaths = this.getIgnoredPaths();
 
@@ -370,6 +402,8 @@ export default class NovelDashboardPlugin extends Plugin {
 		await this.explorer.updateCounts(folderCounts);
 
 		await this.savePluginData();
+
+		this.requestDashboardRefresh();
 	}
 
 	async restoreExplorerCounts() {
@@ -385,6 +419,10 @@ export default class NovelDashboardPlugin extends Plugin {
 	async onunload() {
 		if (this.saveTimer) {
 			window.clearTimeout(this.saveTimer);
+		}
+
+		if (this.dashboardRefreshTimer) {
+			window.clearTimeout(this.dashboardRefreshTimer);
 		}
 
 		await this.savePluginData();

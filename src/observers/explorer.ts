@@ -5,6 +5,8 @@ export class ExplorerManager {
 
 	private pendingCounts: { [path: string]: number } = {};
 
+	private pendingClearPaths = new Set<string>();
+
 	constructor(app: any) {
 		this.app = app;
 	}
@@ -80,6 +82,58 @@ export class ExplorerManager {
 		});
 	}
 
+	private shouldShowPath(
+		path: string,
+		ignoredPaths: string[],
+		writingRoot: string,
+	) {
+		const normalizedPath = path.replace(/^\/+|\/+$/g, '');
+		const normalizedWritingRoot = writingRoot.replace(/^\/+|\/+$/g, '');
+
+		if (!normalizedWritingRoot) {
+			return true;
+		}
+
+		if (!normalizedPath) {
+			return false;
+		}
+
+		if (
+			normalizedPath !== normalizedWritingRoot &&
+			!normalizedPath.startsWith(normalizedWritingRoot + '/')
+		) {
+			return false;
+		}
+
+		return !this.shouldHidePath(path, ignoredPaths, writingRoot);
+	}
+
+	private clearPathFromFileItems(fileItems: any, path: string): boolean {
+		const item = fileItems[path];
+
+		if (!item) {
+			return false;
+		}
+
+		const element = item.titleEl ?? item.selfEl;
+
+		if (!element) {
+			return false;
+		}
+
+		element.removeAttribute('data-novel-dashboard-count');
+
+		return true;
+	}
+
+	private flushPendingClears(fileItems: any) {
+		for (const path of [...this.pendingClearPaths]) {
+			if (this.clearPathFromFileItems(fileItems, path)) {
+				this.pendingClearPaths.delete(path);
+			}
+		}
+	}
+
 	async updateCounts(counts: { [path: string]: number }) {
 		const plugin = this.app.plugins?.plugins?.['ob-novel-dashboard'];
 		const ignoredPaths = plugin?.getIgnoredPaths?.() ?? [];
@@ -97,6 +151,8 @@ export class ExplorerManager {
 		}
 
 		const fileItems = explorer.fileItems;
+
+		this.flushPendingClears(fileItems);
 
 		for (const path in this.pendingCounts) {
 			const item = fileItems[path];
@@ -133,6 +189,10 @@ export class ExplorerManager {
 	async updateSingleFileCount(path: string, count: number) {
 		this.pendingCounts[path] = count;
 
+		const plugin = this.app.plugins?.plugins?.['ob-novel-dashboard'];
+		const ignoredPaths = plugin?.getIgnoredPaths?.() ?? [];
+		const writingRoot = plugin?.settings?.writingFolder?.trim() ?? '';
+
 		const explorer = await this.getExplorer();
 
 		if (!explorer?.fileItems) {
@@ -151,12 +211,39 @@ export class ExplorerManager {
 			return;
 		}
 
+		if (!this.shouldShowPath(path, ignoredPaths, writingRoot)) {
+			element.removeAttribute('data-novel-dashboard-count');
+			delete this.pendingCounts[path];
+
+			return;
+		}
+
 		element.setAttribute(
 			'data-novel-dashboard-count',
 			this.formatCount(count),
 		);
 
 		delete this.pendingCounts[path];
+	}
+
+	async clearPathCount(path: string) {
+		delete this.pendingCounts[path];
+
+		this.pendingClearPaths.add(path);
+
+		const explorer = await this.getExplorer();
+
+		if (!explorer?.fileItems) {
+			return;
+		}
+
+		this.flushPendingClears(explorer.fileItems);
+	}
+
+	async clearPathCounts(paths: string[]) {
+		for (const path of paths) {
+			await this.clearPathCount(path);
+		}
 	}
 
 	/**
@@ -174,6 +261,10 @@ export class ExplorerManager {
 	 * 清除所有显示
 	 */
 	clearCounts() {
+		this.pendingCounts = {};
+
+		this.pendingClearPaths.clear();
+
 		const leaves = this.app.workspace.getLeavesOfType('file-explorer');
 
 		for (const leaf of leaves) {
