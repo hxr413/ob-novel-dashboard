@@ -1,4 +1,4 @@
-import { Notice, Plugin, TFile } from 'obsidian';
+import { Plugin, TFile } from 'obsidian';
 
 import { WordTracker } from './analytics/word-tracker';
 import { AnnotationManager } from './annotations/annotation-manager';
@@ -142,15 +142,6 @@ export default class NovelDashboardPlugin extends Plugin {
 			id: 'open-homepage',
 			name: t('cmdOpenHomepage'),
 			callback: () => void this.dashboardFile.open(),
-		});
-
-		this.addCommand({
-			id: 'scan-writing-folder',
-			name: t('cmdScan'),
-			callback: async () => {
-				const count = await this.rescan();
-				new Notice(t('scanDone', { n: count }));
-			},
 		});
 
 		this.addCommand({

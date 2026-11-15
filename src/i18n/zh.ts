@@ -42,9 +42,7 @@ export const zh: Record<keyof typeof en, string> = {
 	ribbonTooltip: '打开写作面板',
 	cmdOpenSidebar: '打开写作面板',
 	cmdOpenHomepage: '打开写作主页',
-	cmdScan: '重新扫描写作文件夹',
 	cmdEditRecords: '编辑写作记录',
-	scanDone: '已重新扫描 {n} 个文档',
 
 	setHeadingGeneral: '常规',
 	setHeadingDisplay: '显示',

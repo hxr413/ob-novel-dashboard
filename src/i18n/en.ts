@@ -40,9 +40,7 @@ export const en = {
 	ribbonTooltip: 'Open novel dashboard',
 	cmdOpenSidebar: 'Open dashboard sidebar',
 	cmdOpenHomepage: 'Open homepage',
-	cmdScan: 'Rescan writing folder',
 	cmdEditRecords: 'Edit writing records',
-	scanDone: 'Rescanned {n} documents',
 
 	setHeadingGeneral: 'General',
 	setHeadingDisplay: 'Display',
