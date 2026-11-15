@@ -1,22 +1,41 @@
 import { ItemView, WorkspaceLeaf } from 'obsidian';
 
-import NovelDashboardPlugin from '../main';
-
-import { WritingChart } from './components/writing-chart';
-
+import { t } from '../i18n';
+import type NovelDashboardPlugin from '../main';
 import { MonthlyCalendar } from './components/monthly-calendar';
-
+import { closePeriodPicker } from './components/period-picker';
+import type { DashboardSummary } from './dashboard-data';
+import { hideHoverTip } from '../ui/hover-tip';
+import { WritingChart } from './components/writing-chart';
 import { YearHeatmap } from './components/year-heatmap';
+import {
+	CardRefs,
+	renderCards,
+	renderHeader,
+	renderRecent,
+	swapContent,
+	updateCards,
+} from './sections';
 
 export const DASHBOARD_VIEW_TYPE = 'novel-dashboard-view';
 
+export const DASHBOARD_ICON = 'notebook-pen';
+
+/**
+ * 右侧边栏写作面板
+ */
 export class DashboardView extends ItemView {
-	plugin: NovelDashboardPlugin;
+	private cards: CardRefs | null = null;
 
-	constructor(leaf: WorkspaceLeaf, plugin: NovelDashboardPlugin) {
+	private calendar: MonthlyCalendar | null = null;
+
+	private heatmap: YearHeatmap | null = null;
+
+	constructor(
+		leaf: WorkspaceLeaf,
+		private plugin: NovelDashboardPlugin,
+	) {
 		super(leaf);
-
-		this.plugin = plugin;
 	}
 
 	getViewType() {
@@ -24,167 +43,66 @@ export class DashboardView extends ItemView {
 	}
 
 	getDisplayText() {
-		return 'Novel Dashboard';
+		// 与主页文档同名
+		return this.plugin.settings.homepageName;
+	}
+
+	getIcon() {
+		return DASHBOARD_ICON;
 	}
 
 	async onOpen() {
-		await this.render();
+		this.render();
 	}
 
-	async render() {
-		const container = this.contentEl;
-
-		container.empty();
-
-		container.addClass('novel-dashboard');
-
+	/**
+	 * 完整重绘（数据结构变化时，已做防抖）
+	 */
+	render() {
 		const provider = this.plugin.dashboardData;
-
-		if (!provider) {
-			container.createEl('p', {
-				text: 'Dashboard not initialized',
-			});
-
-			return;
-		}
-
 		const summary = provider.getSummary();
 
-		/*
-			标题
+		this.contentEl.addClass('novel-dashboard', 'nd-root');
 
-		*/
+		hideHoverTip();
 
-		container.createEl('h2', {
-			text: 'Novel Dashboard',
-		});
+		// 离屏构建再整体替换：保持滚动位置，不会跳回顶部
+		swapContent(this.contentEl, (container) => this.build(container, summary));
+	}
 
-		/*
-			统计卡片
+	private build(container: HTMLElement, summary: DashboardSummary) {
+		const provider = this.plugin.dashboardData;
 
-		*/
-
-		const cards = container.createDiv({
-			cls: 'novel-dashboard-cards',
-		});
-
-		this.createCard(
-			cards,
-			summary.totalWords.toLocaleString(),
-			'Total Words',
+		renderHeader(container, this.getDisplayText(), summary, () =>
+			this.plugin.openRecordsModal(),
 		);
 
-		this.createCard(
-			cards,
-			`+${summary.todayWords.toLocaleString()}`,
-			'Today',
-		);
+		this.cards = renderCards(container, summary);
 
-		this.createCard(
-			cards,
-			this.formatDuration(summary.todayDuration),
-			'Writing Time',
-		);
+		renderRecent(container, this.plugin, summary);
 
-		/*
-			最近写作
+		WritingChart.create(container, t('last30Days'), provider.getDailyWriting(30));
 
-		*/
+		// 月历和热力图保留翻页状态
+		this.calendar ??= new MonthlyCalendar(provider);
+		this.calendar.mount(container);
 
-		this.createSectionTitle(container, 'Recent Writing');
+		this.heatmap ??= new YearHeatmap(provider);
+		this.heatmap.mount(container);
+	}
 
-		const recent = container.createDiv({
-			cls: 'novel-dashboard-recent',
-		});
-
-		for (const file of summary.recentFiles) {
-			const item = recent.createDiv({
-				cls: 'novel-dashboard-file',
-			});
-
-			item.setText(file.path);
-
-			item.addEventListener('click', () => {
-				const target = this.plugin.app.vault.getAbstractFileByPath(
-					file.path,
-				);
-
-				if (target) {
-					this.plugin.app.workspace.openLinkText(file.path, '');
-				}
-			});
+	/**
+	 * 只更新数字卡片（输入、计时时调用）
+	 */
+	updateLive() {
+		if (this.cards) {
+			updateCards(this.cards, this.plugin.dashboardData.getSummary());
 		}
-
-		/*
-			每日柱状图
-
-		*/
-
-		this.createSectionTitle(container, 'Daily Writing');
-
-		WritingChart.create(container, provider.getDailyWriting(30));
-
-		/*
-			月历
-
-		*/
-
-		this.createSectionTitle(container, 'Monthly Writing');
-
-		const now = new Date();
-
-		MonthlyCalendar.create(
-			container,
-			provider.getMonthlyWriting(now.getFullYear(), now.getMonth() + 1),
-		);
-
-		/*
-			年度热力图
-
-		*/
-
-		this.createSectionTitle(container, 'Year Writing');
-
-		YearHeatmap.create(
-			container,
-			provider.getYearWriting(now.getFullYear()),
-		);
 	}
 
-	createCard(parent: HTMLElement, value: string, title: string) {
-		const card = parent.createDiv({
-			cls: 'novel-dashboard-card',
-		});
-
-		card.createEl('strong', {
-			text: value,
-			cls: 'card-value',
-		});
-
-		card.createEl('div', {
-			text: title,
-			cls: 'card-title',
-		});
+	async onClose() {
+		closePeriodPicker();
+		hideHoverTip();
+		this.cards = null;
 	}
-
-	createSectionTitle(parent: HTMLElement, text: string) {
-		parent.createEl('h3', {
-			text,
-			cls: 'novel-dashboard-section-title',
-		});
-	}
-
-	formatDuration(seconds: number) {
-		const hours = Math.floor(seconds / 3600);
-
-		const minutes = Math.floor((seconds % 3600) / 60);
-
-		if (hours) {
-			return `${hours}h ${minutes}m`;
-		}
-
-		return `${minutes}m`;
-	}
-
-	async onClose() {}
 }

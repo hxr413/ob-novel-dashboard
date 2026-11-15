@@ -1,310 +1,160 @@
-import { App, TFile, TFolder } from 'obsidian';
+import { Notice, TFile, TFolder } from 'obsidian';
 
-import NovelDashboardPlugin from '../main';
+import { t } from '../i18n';
+import type NovelDashboardPlugin from '../main';
+import {
+	ancestorFolders,
+	baseName,
+	isSameOrUnder,
+	parentPath,
+} from '../utils/paths';
 
+/**
+ * 监听 vault 文件变化
+ *
+ * 必须在 onLayoutReady 之后调用 start()：
+ * Obsidian 启动时会为每个已有文件触发一次 create
+ */
 export class FileEventManager {
-	app: App;
-
-	plugin: NovelDashboardPlugin;
-
-	constructor(app: App, plugin: NovelDashboardPlugin) {
-		this.app = app;
-
-		this.plugin = plugin;
-	}
+	constructor(private plugin: NovelDashboardPlugin) {}
 
 	start() {
-		console.log('FileEventManager started');
-
-		/*
-			文件内容修改
-		*/
+		const { vault } = this.plugin.app;
+		const tracker = this.plugin.tracker;
 
 		this.plugin.registerEvent(
-			this.app.vault.on('modify', async (file) => {
-				if (!(file instanceof TFile)) {
+			vault.on('modify', async (file) => {
+				if (!(file instanceof TFile) || file.extension !== 'md') {
 					return;
 				}
 
-				if (file.extension !== 'md') {
-					return;
-				}
+				await tracker.updateFile(file, 'modify');
 
-				await this.updateFile(file);
+				this.changed([file.path]);
 			}),
 		);
 
-		/*
-			新建文件 / 文件夹
-		*/
-
 		this.plugin.registerEvent(
-			this.app.vault.on('create', async (file) => {
+			vault.on('create', async (file) => {
 				if (file instanceof TFile) {
 					if (file.extension !== 'md') {
 						return;
 					}
 
-					await this.updateFile(file);
+					await tracker.updateFile(file, 'create');
+
+					this.changed([file.path]);
 				} else if (file instanceof TFolder) {
-					/*
-							新文件夹需要刷新 explorer
+					tracker.rebuildFolders();
 
-							让空文件夹显示 0
-						*/
-
-					await this.rebuildFolderCounts();
-
-					this.plugin.requestDashboardRefresh();
+					this.changed([file.path]);
 				}
 			}),
 		);
 
-		/*
-			删除
-		*/
-
 		this.plugin.registerEvent(
-			this.app.vault.on('delete', async (file) => {
+			vault.on('delete', (file) => {
 				if (file instanceof TFile) {
-					await this.plugin.explorer.clearPathCount(file.path);
-					this.removeFile(file.path);
+					tracker.forgetFile(file.path);
 				} else if (file instanceof TFolder) {
-					this.plugin.explorer.clearCounts();
-					this.removeFolder(file.path);
+					for (const path of Object.keys(
+						this.plugin.data.documentCounts,
+					)) {
+						if (path.startsWith(file.path + '/')) {
+							tracker.forgetFile(path);
+						}
+					}
+
+					tracker.rebuildFolders();
 				}
 
-				await this.rebuildFolderCounts();
-
-				this.plugin.dashboardFile.requestUpdate();
-
-				this.plugin.requestDashboardRefresh();
-
-				this.plugin.requestSave();
+				this.plugin.annotations.onDelete(file.path);
+				this.changed([file.path]);
 			}),
 		);
 
-		/*
-			移动 / 重命名
-
-		*/
-
 		this.plugin.registerEvent(
-			this.app.vault.on('rename', async (file, oldPath) => {
-				if (file instanceof TFile) {
-					const wasTracked =
-						this.plugin.data.documentCounts[oldPath] !== undefined;
-
-					/*
-							删除旧缓存
-						*/
-
-					this.removeFile(oldPath);
-
-					await this.plugin.explorer.clearPathCounts([
-						oldPath,
-						file.path,
-					]);
-
-					/*
-							重新计算新路径
-
-						*/
-
-					if (file.extension === 'md') {
-						await this.updateFile(file);
-					}
-
-					if (
-						wasTracked &&
-						(!file.path.startsWith(
-							this.plugin.settings.writingFolder + '/',
-						) ||
-							this.plugin.isPathIgnored(file.path))
-					) {
-						await this.rebuildFolderCounts();
-
-						this.plugin.dashboardFile.requestUpdate();
-
-						this.plugin.requestDashboardRefresh();
-
-						this.plugin.requestSave();
-					}
-				} else if (file instanceof TFolder) {
-					/*
-							文件夹移动/改名
-
-							路径全部变化
-
-							直接重新扫描缓存结构
-						*/
-
-					this.plugin.explorer.clearCounts();
-
-					await this.plugin.initializeCounts(false);
-
-					this.plugin.dashboardFile.requestUpdate();
-
-					this.plugin.requestDashboardRefresh();
+			vault.on('rename', async (file, oldPath) => {
+				if (!(file instanceof TFile) && !(file instanceof TFolder)) {
+					return;
 				}
+
+				if (file instanceof TFile && file.extension !== 'md') {
+					return;
+				}
+
+				if (await this.guardLayout(file, oldPath)) {
+					return;
+				}
+
+				this.plugin.annotations.onRename(oldPath, file.path);
+
+				await tracker.rename(file, oldPath);
+
+				// 路径整体变化，重新标注整个文件树
+				this.plugin.explorer.refreshAll();
+				this.plugin.onDataChanged();
 			}),
 		);
 	}
 
 	/**
-	 * 更新文件
-	 */
-
-	async updateFile(file: TFile) {
-		const path = file.path;
-
-		if (!path.startsWith(this.plugin.settings.writingFolder + '/')) {
-			await this.plugin.explorer.clearPathCount(path);
-
-			return;
-		}
-
-		if (this.plugin.isPathIgnored(path)) {
-			delete this.plugin.data.documentCounts[path];
-			await this.plugin.explorer.clearPathCount(path);
-			this.plugin.dashboardFile.requestUpdate();
-			this.plugin.requestDashboardRefresh();
-			this.plugin.requestSave();
-			await this.rebuildFolderCounts();
-
-			return;
-		}
-
-		const content = await this.app.vault.read(file);
-
-		const count = this.plugin.statistics.countWords(content);
-
-		/*
-			更新文件字数
-		*/
-
-		this.plugin.data.documentCounts[path] = count;
-
-		/*
-			更新最近写作
-
-		*/
-
-		this.updateRecentFile(path);
-
-		/*
-			Explorer
-
-		*/
-
-		await this.plugin.explorer.updateSingleFileCount(path, count);
-
-		await this.rebuildFolderCounts();
-
-		/*
-			Dashboard 更新
-
-		*/
-
-		this.plugin.dashboardFile.requestUpdate();
-
-		this.plugin.requestDashboardRefresh();
-
-		/*
-			debounce 保存
-
-		*/
-
-		this.plugin.requestSave();
-
-		console.log('File updated:', path, count);
-	}
-
-	/**
-	 * 最近写作记录
+	 * 主页与写作文件夹的位置保护
 	 *
-	 * 保留 20 个
+	 * - 写作文件夹（或其上级）被改名：设置跟着更新
+	 * - 主页在原文件夹内改名：当作修改主页名称
+	 * - 主页被移出写作文件夹根目录：移回原处
+	 *
+	 * @returns 是否已处理（主页被移回时不再继续）
 	 */
+	private async guardLayout(
+		file: TFile | TFolder,
+		oldPath: string,
+	): Promise<boolean> {
+		const settings = this.plugin.settings;
 
-	updateRecentFile(path: string) {
-		const list = this.plugin.data.recentFiles;
+		if (file instanceof TFolder) {
+			if (isSameOrUnder(settings.writingFolder, oldPath)) {
+				settings.writingFolder =
+					file.path + settings.writingFolder.slice(oldPath.length);
 
-		const filtered = list.filter((item) => item.path !== path);
+				await this.plugin.savePluginData();
+			}
 
-		filtered.unshift({
-			path,
-
-			time: Date.now(),
-		});
-
-		this.plugin.data.recentFiles = filtered.slice(0, 20);
-	}
-
-	/**
-	 * 删除文件
-	 */
-
-	private isDashboardFile(path: string): boolean {
-		const dashboardPath =
-			this.plugin.settings.dashboard.dashboardFilePath.replace(
-				/^\/+|\/+$/g,
-				'',
-			);
-		const normalizedPath = path.replace(/^\/+|\/+$/g, '');
-
-		return (
-			normalizedPath === dashboardPath ||
-			normalizedPath.endsWith('/' + dashboardPath)
-		);
-	}
-
-	removeFile(path: string) {
-		if (this.isDashboardFile(path)) {
-			return;
+			return false;
 		}
 
-		delete this.plugin.data.documentCounts[path];
+		if (oldPath !== this.plugin.layout.getDashboardPath()) {
+			return false;
+		}
 
-		this.plugin.data.recentFiles = this.plugin.data.recentFiles.filter(
-			(item) => item.path !== path,
-		);
+		if (parentPath(file.path) === parentPath(oldPath)) {
+			settings.homepageName = baseName(file.path);
+
+			await this.plugin.savePluginData();
+			this.plugin.explorer.resort();
+
+			return false;
+		}
+
+		await this.plugin.app.fileManager.renameFile(file, oldPath);
+		new Notice(t('noticeHomepagePinned'));
+
+		return true;
 	}
 
-	/**
-	 * 删除文件夹
+	private changed(paths: string[]) {
+		const affected = new Set<string>();
 
-	 */
+		for (const path of paths) {
+			affected.add(path);
 
-	removeFolder(path: string) {
-		const prefix = path + '/';
-
-		for (const filePath in this.plugin.data.documentCounts) {
-			if (filePath.startsWith(prefix)) {
-				delete this.plugin.data.documentCounts[filePath];
+			for (const folder of ancestorFolders(path)) {
+				affected.add(folder);
 			}
 		}
 
-		this.plugin.data.recentFiles = this.plugin.data.recentFiles.filter(
-			(item) => !item.path.startsWith(prefix),
-		);
-	}
-
-	/**
-	 * 重建文件夹统计
-	 */
-
-	async rebuildFolderCounts() {
-		const folderCounts = this.plugin.statistics.calculateFolderCounts(
-			this.plugin.data.documentCounts,
-			this.plugin.statistics.getFolderPaths(),
-		);
-
-		this.plugin.data.folderCounts = folderCounts;
-
-		await this.plugin.explorer.updateCounts({
-			...this.plugin.data.documentCounts,
-
-			...folderCounts,
-		});
+		this.plugin.explorer.refreshPaths([...affected]);
+		this.plugin.onDataChanged();
 	}
 }

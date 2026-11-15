@@ -1,34 +1,48 @@
-import { MarkdownPostProcessorContext, MarkdownRenderChild } from 'obsidian';
+import { MarkdownRenderChild } from 'obsidian';
 
-import NovelDashboardPlugin from '../main';
+import { t } from '../i18n';
+import { MonthlyCalendar } from './components/monthly-calendar';
+import { WritingChart } from './components/writing-chart';
+import { YearHeatmap } from './components/year-heatmap';
+import type NovelDashboardPlugin from '../main';
+import {
+	CardRefs,
+	renderCards,
+	renderHeader,
+	renderRecent,
+	swapContent,
+	updateCards,
+} from './sections';
 
-import { DashboardDataProvider } from './dashboard-data';
+export const HOMEPAGE_CODE_BLOCK = 'webnovel-homepage';
 
+/**
+ * 每个主页代码块各自保留月历 / 热力图的翻页状态
+ */
+interface HomepageState {
+	calendar: MonthlyCalendar;
+	heatmap: YearHeatmap;
+}
+
+/**
+ * 主页文档里 ```webnovel-homepage``` 代码块的渲染
+ */
 export class HomepageRenderer {
-	plugin: NovelDashboardPlugin;
-
-	provider: DashboardDataProvider;
-
 	private children = new Set<HomepageRenderChild>();
 
-	constructor(plugin: NovelDashboardPlugin) {
-		this.plugin = plugin;
+	constructor(private plugin: NovelDashboardPlugin) {}
 
-		this.provider = new DashboardDataProvider(plugin);
-	}
-
-	render(
-		_source: string,
-		container: HTMLElement,
-		context: MarkdownPostProcessorContext,
-	) {
-		const child = new HomepageRenderChild(this, container);
+	createChild(container: HTMLElement): HomepageRenderChild {
+		const child = new HomepageRenderChild(this, container, {
+			calendar: new MonthlyCalendar(this.plugin.dashboardData),
+			heatmap: new YearHeatmap(this.plugin.dashboardData),
+		});
 
 		this.children.add(child);
 
-		context.addChild(child);
-
 		child.render();
+
+		return child;
 	}
 
 	refresh() {
@@ -37,129 +51,65 @@ export class HomepageRenderer {
 		}
 	}
 
+	updateLive() {
+		for (const child of this.children) {
+			child.updateLive();
+		}
+	}
+
 	removeChild(child: HomepageRenderChild) {
 		this.children.delete(child);
 	}
 
-	renderContent(container: HTMLElement) {
-		container.empty();
+	renderContent(container: HTMLElement, state: HomepageState): CardRefs {
+		const provider = this.plugin.dashboardData;
+		const summary = provider.getSummary();
 
-		const summary = this.provider.getSummary();
+		let cards!: CardRefs;
 
-		const daily = this.provider.getDailyWriting(7);
+		// 离屏构建再整体替换：文档不会因为高度塌陷而滚动
+		swapContent(container, (next) => {
+			const root = next.createDiv({ cls: 'nd-root nd-homepage' });
 
-		const root = container.createDiv({ cls: 'novel-homepage-root' });
+			renderHeader(root, null, summary, () => this.plugin.openRecordsModal());
 
-		const cards = root.createDiv({ cls: 'novel-homepage-grid' });
+			cards = renderCards(root, summary);
 
-		this.createCard(cards, summary.totalWords.toLocaleString(), '总字数');
+			renderRecent(root, this.plugin, summary);
 
-		this.createCard(
-			cards,
-			`+${summary.todayWords.toLocaleString()}`,
-			'今日新增',
-		);
+			WritingChart.create(root, t('last7Days'), provider.getDailyWriting(7));
 
-		this.createCard(
-			cards,
-			this.formatDuration(summary.todayDuration),
-			'今日时长',
-		);
-
-		const recentSection = root.createDiv({ cls: 'novel-homepage-section' });
-
-		recentSection.createEl('h3', {
-			text: '最近写作',
-			cls: 'novel-homepage-section-title',
+			state.calendar.mount(root);
+			state.heatmap.mount(root);
 		});
 
-		const recentList = recentSection.createDiv({
-			cls: 'novel-homepage-list',
-		});
-
-		if (summary.recentFiles.length > 0) {
-			for (const file of summary.recentFiles) {
-				const item = recentList.createDiv({
-					cls: 'novel-homepage-list-item',
-				});
-
-				item.setText(file.path);
-			}
-		} else {
-			recentList.createDiv({
-				cls: 'novel-homepage-empty',
-				text: '暂无最近写作记录',
-			});
-		}
-
-		const dailySection = root.createDiv({ cls: 'novel-homepage-section' });
-
-		dailySection.createEl('h3', {
-			text: '近 7 日',
-			cls: 'novel-homepage-section-title',
-		});
-
-		const table = dailySection.createEl('table', {
-			cls: 'novel-homepage-table',
-		});
-
-		const thead = table.createEl('thead');
-
-		const headerRow = thead.createEl('tr');
-
-		headerRow.createEl('th', { text: '日期' });
-		headerRow.createEl('th', { text: '字数' });
-		headerRow.createEl('th', { text: '时长' });
-
-		const tbody = table.createEl('tbody');
-
-		for (const item of daily) {
-			const row = tbody.createEl('tr');
-
-			row.createEl('td', { text: item.date });
-			row.createEl('td', { text: item.words.toLocaleString() });
-			row.createEl('td', { text: this.formatDuration(item.duration) });
-		}
+		return cards;
 	}
 
-	private createCard(parent: HTMLElement, value: string, label: string) {
-		const card = parent.createDiv({ cls: 'novel-homepage-card' });
-
-		card.createEl('div', {
-			cls: 'novel-homepage-card-value',
-			text: value,
-		});
-
-		card.createEl('div', {
-			cls: 'novel-homepage-card-label',
-			text: label,
-		});
-	}
-
-	private formatDuration(seconds: number): string {
-		const hours = Math.floor(seconds / 3600);
-
-		const minutes = Math.floor((seconds % 3600) / 60);
-
-		if (hours > 0) {
-			return `${hours}h ${minutes}m`;
-		}
-
-		return `${minutes}m`;
+	updateCards(refs: CardRefs) {
+		updateCards(refs, this.plugin.dashboardData.getSummary());
 	}
 }
 
 class HomepageRenderChild extends MarkdownRenderChild {
-	renderer: HomepageRenderer;
+	private cards: CardRefs | null = null;
 
-	constructor(renderer: HomepageRenderer, container: HTMLElement) {
+	constructor(
+		private renderer: HomepageRenderer,
+		container: HTMLElement,
+		private state: HomepageState,
+	) {
 		super(container);
-
-		this.renderer = renderer;
 	}
 
 	render() {
-		this.renderer.renderContent(this.containerEl);
+		this.cards = this.renderer.renderContent(this.containerEl, this.state);
+	}
+
+	updateLive() {
+		if (this.cards) {
+			this.renderer.updateCards(this.cards);
+		}
 	}
 
 	onunload() {

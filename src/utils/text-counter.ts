@@ -76,7 +76,8 @@ export class TextCounter {
 				// Obsidian link
 				.replace(
 					/\[\[([^\]|]+)(?:\|([^\]]+))?]]/g,
-					(_, file, alias) => alias ?? file,
+					(_: string, file: string, alias: string | undefined) =>
+						alias ?? file,
 				)
 
 				// Bold

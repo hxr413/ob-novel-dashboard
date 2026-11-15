@@ -1,199 +1,124 @@
-import NovelDashboardPlugin from '../main';
-
-export interface RecentFileSummary {
-	path: string;
-
-	time: number;
-}
+import type { NovelDashboardData, RecentFile } from '../core/saved-data';
+import { daysBetween, formatDate, todayKey } from '../utils/date';
 
 export interface DailyWritingSummary {
 	date: string;
-
 	words: number;
-
+	typed: number;
 	duration: number;
 }
 
 export interface DashboardSummary {
-	// 总字数
-
 	totalWords: number;
-
-	// 今日新增
-
-	todayWords: number;
-
-	// 今日写作时间
-
+	todayNet: number;
+	todayTyped: number;
 	todayDuration: number;
-
-	// 最近写作
-
-	recentFiles: RecentFileSummary[];
+	startDate: string;
+	/** 从起始日期到今天是第几天 */
+	dayNumber: number;
+	recentFiles: RecentFile[];
 }
 
+/**
+ * 侧边栏和主页共用的数据读取
+ */
 export class DashboardDataProvider {
-	plugin: NovelDashboardPlugin;
-
-	constructor(plugin: NovelDashboardPlugin) {
-		this.plugin = plugin;
-	}
-
-	/**
-	 * Dashboard 首页数据
-	 */
+	constructor(
+		private getData: () => NovelDashboardData,
+		private exists: (path: string) => boolean,
+	) {}
 
 	getSummary(): DashboardSummary {
-		const data = this.plugin.data;
+		const data = this.getData();
+		const today = todayKey();
+		const stat = data.dailyStats[today];
+		const startDate = this.getStartDate();
 
-		const today = this.getToday();
+		let totalWords = 0;
 
-		const todayStat = data.dailyStats[today];
+		for (const path in data.documentCounts) {
+			totalWords += data.documentCounts[path] ?? 0;
+		}
 
 		return {
-			totalWords: this.getTotalWords(),
-
-			todayWords: todayStat?.words ?? 0,
-
-			todayDuration: todayStat?.duration ?? 0,
-
+			totalWords,
+			todayNet: stat?.words ?? 0,
+			todayTyped: stat?.typed ?? 0,
+			todayDuration: stat?.duration ?? 0,
+			startDate,
+			dayNumber: Math.max(1, daysBetween(startDate, today) + 1),
 			recentFiles: this.getRecentFiles(5),
 		};
 	}
 
 	/**
-	 * 总字数
+	 * 起始日期：设置值与最早一条记录中较早者
 	 */
+	getStartDate(): string {
+		const data = this.getData();
 
-	getTotalWords(): number {
-		return Object.values(this.plugin.data.documentCounts).reduce(
-			(total, count) => total + count,
-			0,
-		);
+		const earliest = Object.keys(data.dailyStats)
+			.filter((date) => {
+				const stat = data.dailyStats[date];
+
+				return stat && (stat.words !== 0 || stat.typed > 0 || stat.duration > 0);
+			})
+			.sort()[0];
+
+		return earliest && earliest < data.startDate ? earliest : data.startDate;
 	}
 
-	/**
-	 * 最近写作
-
-	 * 默认最多 5 个
-
-	 */
-
-	getRecentFiles(limit = 5): RecentFileSummary[] {
-		return [...this.plugin.data.recentFiles]
+	getRecentFiles(limit = 5): RecentFile[] {
+		return [...this.getData().recentFiles]
+			.filter((file) => this.exists(file.path))
 			.sort((a, b) => b.time - a.time)
 			.slice(0, limit);
 	}
 
-	/**
-	 * 获取每日数据
-
-	 */
-
 	getDailyWriting(days = 30): DailyWritingSummary[] {
 		const result: DailyWritingSummary[] = [];
-
 		const now = new Date();
 
 		for (let i = days - 1; i >= 0; i--) {
-			const date = new Date(now);
+			const date = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
 
-			date.setDate(now.getDate() - i);
-
-			const key = this.formatDate(date);
-
-			const stat = this.plugin.data.dailyStats[key];
-
-			result.push({
-				date: key,
-
-				words: stat?.words ?? 0,
-
-				duration: stat?.duration ?? 0,
-			});
+			result.push(this.getDay(formatDate(date)));
 		}
 
 		return result;
 	}
 
-	/**
-	 * 周统计
-
-	 */
-
-	getWeeklyWriting() {
-		return this.getDailyWriting(7);
-	}
-
-	/**
-	 * 月日历数据
-
-	 */
-
-	getMonthlyWriting(year: number, month: number) {
+	getMonthlyWriting(year: number, month: number): DailyWritingSummary[] {
 		const result: DailyWritingSummary[] = [];
-
 		const days = new Date(year, month, 0).getDate();
 
 		for (let i = 1; i <= days; i++) {
-			const date = new Date(year, month - 1, i);
-
-			const key = this.formatDate(date);
-
-			const stat = this.plugin.data.dailyStats[key];
-
-			result.push({
-				date: key,
-
-				words: stat?.words ?? 0,
-
-				duration: stat?.duration ?? 0,
-			});
+			result.push(this.getDay(formatDate(new Date(year, month - 1, i))));
 		}
 
 		return result;
 	}
 
-	/**
-	 * 年热力图
-
-	 */
-
-	getYearWriting(year: number) {
+	getYearWriting(year: number): DailyWritingSummary[] {
 		const result: DailyWritingSummary[] = [];
+		const date = new Date(year, 0, 1);
 
-		const start = new Date(year, 0, 1);
-
-		const end = new Date(year + 1, 0, 1);
-
-		for (let date = start; date < end; date.setDate(date.getDate() + 1)) {
-			const key = this.formatDate(date);
-
-			const stat = this.plugin.data.dailyStats[key];
-
-			result.push({
-				date: key,
-
-				words: stat?.words ?? 0,
-
-				duration: stat?.duration ?? 0,
-			});
+		while (date.getFullYear() === year) {
+			result.push(this.getDay(formatDate(date)));
+			date.setDate(date.getDate() + 1);
 		}
 
 		return result;
 	}
 
-	private getToday(): string {
-		return this.formatDate(new Date());
-	}
+	private getDay(date: string): DailyWritingSummary {
+		const stat = this.getData().dailyStats[date];
 
-	private formatDate(date: Date): string {
-		return [
-			date.getFullYear(),
-
-			String(date.getMonth() + 1).padStart(2, '0'),
-
-			String(date.getDate()).padStart(2, '0'),
-		].join('-');
+		return {
+			date,
+			words: stat?.words ?? 0,
+			typed: stat?.typed ?? 0,
+			duration: stat?.duration ?? 0,
+		};
 	}
 }

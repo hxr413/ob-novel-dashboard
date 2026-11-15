@@ -1,70 +1,43 @@
 import { TFile } from 'obsidian';
 
-import NovelDashboardPlugin from '../main';
+import type NovelDashboardPlugin from '../main';
+import { openOrRevealFile } from '../ui/open-file';
+import { HOMEPAGE_CODE_BLOCK } from './homepage-renderer';
 
-import { DashboardDataProvider } from './dashboard-data';
+const HOMEPAGE_CONTENT = '```' + HOMEPAGE_CODE_BLOCK + '\n```\n';
 
+/**
+ * 主页文档：只在不存在时创建，之后内容由代码块实时渲染，不再写入文件
+ */
 export class DashboardFileManager {
-	plugin: NovelDashboardPlugin;
+	constructor(private plugin: NovelDashboardPlugin) {}
 
-	provider: DashboardDataProvider;
+	async ensure(): Promise<TFile | null> {
+		if (!this.plugin.settings.enableDashboardFile) {
+			return null;
+		}
 
-	private updateTimer: number | null = null;
+		const { vault } = this.plugin.app;
+		const path = this.plugin.layout.getDashboardPath();
+		const existing = vault.getAbstractFileByPath(path);
 
-	constructor(plugin: NovelDashboardPlugin) {
-		this.plugin = plugin;
+		if (existing instanceof TFile) {
+			return existing;
+		}
 
-		this.provider = new DashboardDataProvider(plugin);
+		if (existing) {
+			return null;
+		}
+
+		await this.plugin.layout.ensureFolder(this.plugin.layout.writingFolder);
+
+		return vault.create(path, HOMEPAGE_CONTENT);
 	}
 
-	async initialize() {
-		if (!this.plugin.settings.dashboard.enableDashboardFile) {
-			return;
-		}
+	async open() {
+		const file = await this.ensure();
+		const path = file?.path ?? this.plugin.layout.getDashboardPath();
 
-		await this.updateDashboardFile();
-	}
-
-	requestUpdate() {
-		if (this.updateTimer) {
-			window.clearTimeout(this.updateTimer);
-		}
-
-		this.updateTimer = window.setTimeout(async () => {
-			await this.updateDashboardFile();
-
-			this.updateTimer = null;
-		}, 2000);
-	}
-
-	async updateDashboardFile() {
-		if (!this.plugin.settings.dashboard.enableDashboardFile) {
-			return;
-		}
-
-		const path = this.plugin.settings.dashboard.dashboardFilePath;
-
-		const content = this.generateMarkdown();
-
-		const existing = this.plugin.app.vault.getAbstractFileByPath(path);
-
-		if (!existing) {
-			await this.plugin.app.vault.create(path, content);
-
-			return;
-		}
-
-		if (!(existing instanceof TFile)) {
-			return;
-		}
-
-		await this.plugin.app.vault.modify(existing, content);
-	}
-
-	private generateMarkdown(): string {
-		return `
-\`\`\`webnovel-homepage
-\`\`\`
-`;
+		await openOrRevealFile(this.plugin.app, path);
 	}
 }

@@ -1,286 +1,209 @@
-// 左侧边栏显示文档/文件夹字数
+import { TAbstractFile, TFolder, View } from 'obsidian';
 
-export class ExplorerManager {
-	app: any;
+import type NovelDashboardPlugin from '../main';
 
-	private pendingCounts: { [path: string]: number } = {};
+/**
+ * 左侧文件树：字数后缀、主页标记、主页置顶
+ *
+ * 文件浏览器没有公开 API，这里只依赖 fileItems / getSortedFolderItems / requestSort，
+ * 并在卸载时全部还原。
+ */
 
-	private pendingClearPaths = new Set<string>();
+interface FileItem {
+	file: TAbstractFile;
+	selfEl?: HTMLElement;
+	titleEl?: HTMLElement;
+}
 
-	constructor(app: any) {
-		this.app = app;
-	}
+interface FileExplorerView extends View {
+	fileItems: Record<string, FileItem | undefined>;
+	getSortedFolderItems?: (folder: TFolder) => FileItem[];
+	requestSort?: () => void;
+}
 
-	private formatCount(count: number): string {
-		return String(count);
+const COUNT_ATTR = 'data-nd-count';
+const KIND_ATTR = 'data-nd-kind';
+const HOME_ATTR = 'data-nd-home';
+
+export class ExplorerDecorator {
+	private patchedViews = new Set<FileExplorerView>();
+
+	constructor(private plugin: NovelDashboardPlugin) {}
+
+	private getViews(): FileExplorerView[] {
+		const views: FileExplorerView[] = [];
+
+		for (const leaf of this.plugin.app.workspace.getLeavesOfType(
+			'file-explorer',
+		)) {
+			const view = leaf.view as Partial<FileExplorerView>;
+
+			if (view.fileItems) {
+				views.push(view as FileExplorerView);
+			}
+		}
+
+		return views;
 	}
 
 	/**
-	 * 获取 Obsidian 文件浏览器
+	 * 新出现的文件浏览器：打补丁并整体标注
 	 */
-	async getExplorer(retries = 6, delay = 150): Promise<any | null> {
-		for (let attempt = 0; attempt < retries; attempt++) {
-			const leaves = this.app.workspace.getLeavesOfType('file-explorer');
+	attach() {
+		for (const view of this.getViews()) {
+			if (this.patchedViews.has(view)) {
+				continue;
+			}
 
-			for (const leaf of leaves) {
-				const view = leaf.view as any;
+			this.patchSort(view);
+			this.blockHomepageDrag(view);
+			this.patchedViews.add(view);
+			this.decorateView(view);
+		}
+	}
 
-				if (view && view.fileItems) {
-					return view;
+	refreshAll() {
+		this.attach();
+
+		for (const view of this.patchedViews) {
+			this.decorateView(view);
+		}
+	}
+
+	refreshPaths(paths: string[]) {
+		this.attach();
+
+		for (const view of this.patchedViews) {
+			for (const path of paths) {
+				const item = view.fileItems[path];
+
+				if (item) {
+					this.decorateItem(path, item);
 				}
 			}
-
-			if (attempt < retries - 1) {
-				await new Promise((resolve) =>
-					window.setTimeout(resolve, delay),
-				);
-			}
-		}
-
-		return null;
-	}
-
-	/**
-	 * 更新文件树显示
-	 *
-	 * counts:
-	 *
-	 * {
-	 *   "写作/短篇/故事 A.md":3000,
-	 *   "写作/长篇/第一卷/第一章.md":5000
-	 * }
-	 *
-	 */
-	private shouldHidePath(
-		path: string,
-		ignoredPaths: string[],
-		writingRoot: string,
-	) {
-		const normalizedPath = path.replace(/^\/+|\/+$/g, '');
-		const normalizedWritingRoot = writingRoot.replace(/^\/+|\/+$/g, '');
-
-		if (!normalizedWritingRoot) {
-			return false;
-		}
-
-		if (normalizedPath === normalizedWritingRoot) {
-			return false;
-		}
-
-		return ignoredPaths.some((ignoredPath) => {
-			const normalizedIgnoredPath = ignoredPath.replace(/^\/+|\/+$/g, '');
-
-			if (!normalizedIgnoredPath) {
-				return false;
-			}
-
-			return (
-				normalizedPath === normalizedIgnoredPath ||
-				normalizedPath.startsWith(normalizedIgnoredPath + '/') ||
-				normalizedIgnoredPath.startsWith(normalizedPath + '/')
-			);
-		});
-	}
-
-	private shouldShowPath(
-		path: string,
-		ignoredPaths: string[],
-		writingRoot: string,
-	) {
-		const normalizedPath = path.replace(/^\/+|\/+$/g, '');
-		const normalizedWritingRoot = writingRoot.replace(/^\/+|\/+$/g, '');
-
-		if (!normalizedWritingRoot) {
-			return true;
-		}
-
-		if (!normalizedPath) {
-			return false;
-		}
-
-		if (
-			normalizedPath !== normalizedWritingRoot &&
-			!normalizedPath.startsWith(normalizedWritingRoot + '/')
-		) {
-			return false;
-		}
-
-		return !this.shouldHidePath(path, ignoredPaths, writingRoot);
-	}
-
-	private clearPathFromFileItems(fileItems: any, path: string): boolean {
-		const item = fileItems[path];
-
-		if (!item) {
-			return false;
-		}
-
-		const element = item.titleEl ?? item.selfEl;
-
-		if (!element) {
-			return false;
-		}
-
-		element.removeAttribute('data-novel-dashboard-count');
-
-		return true;
-	}
-
-	private flushPendingClears(fileItems: any) {
-		for (const path of [...this.pendingClearPaths]) {
-			if (this.clearPathFromFileItems(fileItems, path)) {
-				this.pendingClearPaths.delete(path);
-			}
-		}
-	}
-
-	async updateCounts(counts: { [path: string]: number }) {
-		const plugin = this.app.plugins?.plugins?.['ob-novel-dashboard'];
-		const ignoredPaths = plugin?.getIgnoredPaths?.() ?? [];
-		const writingRoot = plugin?.settings?.writingFolder?.trim() ?? '';
-
-		this.pendingCounts = {
-			...this.pendingCounts,
-			...counts,
-		};
-
-		const explorer = await this.getExplorer();
-
-		if (!explorer?.fileItems) {
-			return;
-		}
-
-		const fileItems = explorer.fileItems;
-
-		this.flushPendingClears(fileItems);
-
-		for (const path in this.pendingCounts) {
-			const item = fileItems[path];
-
-			const count = this.pendingCounts[path];
-
-			if (count === undefined || !item) {
-				continue;
-			}
-
-			const element = item.titleEl ?? item.selfEl;
-
-			if (!element) {
-				continue;
-			}
-
-			if (this.shouldHidePath(path, ignoredPaths, writingRoot)) {
-				element.removeAttribute('data-novel-dashboard-count');
-				continue;
-			}
-
-			element.setAttribute(
-				'data-novel-dashboard-count',
-				this.formatCount(count),
-			);
-		}
-
-		this.pendingCounts = {};
-	}
-
-	/**
-	 * 实时更新单个文件
-	 */
-	async updateSingleFileCount(path: string, count: number) {
-		this.pendingCounts[path] = count;
-
-		const plugin = this.app.plugins?.plugins?.['ob-novel-dashboard'];
-		const ignoredPaths = plugin?.getIgnoredPaths?.() ?? [];
-		const writingRoot = plugin?.settings?.writingFolder?.trim() ?? '';
-
-		const explorer = await this.getExplorer();
-
-		if (!explorer?.fileItems) {
-			return;
-		}
-
-		const item = explorer.fileItems[path];
-
-		if (!item) {
-			return;
-		}
-
-		const element = item.titleEl ?? item.selfEl;
-
-		if (!element) {
-			return;
-		}
-
-		if (!this.shouldShowPath(path, ignoredPaths, writingRoot)) {
-			element.removeAttribute('data-novel-dashboard-count');
-			delete this.pendingCounts[path];
-
-			return;
-		}
-
-		element.setAttribute(
-			'data-novel-dashboard-count',
-			this.formatCount(count),
-		);
-
-		delete this.pendingCounts[path];
-	}
-
-	async clearPathCount(path: string) {
-		delete this.pendingCounts[path];
-
-		this.pendingClearPaths.add(path);
-
-		const explorer = await this.getExplorer();
-
-		if (!explorer?.fileItems) {
-			return;
-		}
-
-		this.flushPendingClears(explorer.fileItems);
-	}
-
-	async clearPathCounts(paths: string[]) {
-		for (const path of paths) {
-			await this.clearPathCount(path);
 		}
 	}
 
 	/**
-	 * 更新文件夹字数
-	 *
-	 * 现在由 StatisticsEngine
-	 * 重新计算后直接传入
-	 *
+	 * 设置变化后让文件浏览器重新排序（置顶开关、主页改名）
 	 */
-	async updateFolderCounts(folderCounts: { [path: string]: number }) {
-		await this.updateCounts(folderCounts);
+	resort() {
+		for (const view of this.patchedViews) {
+			view.requestSort?.();
+		}
 	}
 
-	/**
-	 * 清除所有显示
-	 */
-	clearCounts() {
-		this.pendingCounts = {};
-
-		this.pendingClearPaths.clear();
-
-		const leaves = this.app.workspace.getLeavesOfType('file-explorer');
-
-		for (const leaf of leaves) {
-			const view = leaf.view as any;
-
-			if (!view.fileItems) {
-				continue;
-			}
+	detach() {
+		for (const view of this.patchedViews) {
+			// 只删实例上的覆盖，恢复原型方法
+			delete (view as Partial<FileExplorerView>).getSortedFolderItems;
+			view.requestSort?.();
 
 			for (const path in view.fileItems) {
 				const item = view.fileItems[path];
+				const el = item?.titleEl ?? item?.selfEl;
 
-				const element = item.titleEl ?? item.selfEl;
-
-				element?.removeAttribute('data-novel-dashboard-count');
+				el?.removeAttribute(COUNT_ATTR);
+				el?.removeAttribute(KIND_ATTR);
+				item?.selfEl?.removeAttribute(HOME_ATTR);
 			}
 		}
+
+		this.patchedViews.clear();
+	}
+
+	private decorateView(view: FileExplorerView) {
+		for (const path in view.fileItems) {
+			const item = view.fileItems[path];
+
+			if (item) {
+				this.decorateItem(path, item);
+			}
+		}
+	}
+
+	private decorateItem(path: string, item: FileItem) {
+		const el = item.titleEl ?? item.selfEl;
+
+		if (!el) {
+			return;
+		}
+
+		const { documentCounts, folderCounts } = this.plugin.data;
+
+		const isFolder = item.file instanceof TFolder;
+		const count = isFolder ? folderCounts[path] : documentCounts[path];
+
+		if (count === undefined) {
+			el.removeAttribute(COUNT_ATTR);
+			el.removeAttribute(KIND_ATTR);
+		} else {
+			el.setAttribute(COUNT_ATTR, String(count));
+			el.setAttribute(KIND_ATTR, isFolder ? 'folder' : 'file');
+		}
+
+		if (path === this.plugin.layout.getDashboardPath()) {
+			item.selfEl?.setAttribute(HOME_ATTR, '');
+		} else {
+			item.selfEl?.removeAttribute(HOME_ATTR);
+		}
+	}
+
+	/**
+	 * 主页不能被拖动：在捕获阶段拦截 dragstart，先于文件浏览器自己的处理
+	 */
+	private blockHomepageDrag(view: FileExplorerView) {
+		this.plugin.registerDomEvent(
+			view.containerEl,
+			'dragstart',
+			(event) => {
+				const target = event.target;
+
+				if (!(target instanceof HTMLElement)) {
+					return;
+				}
+
+				const path = target.closest('[data-path]')?.getAttribute('data-path');
+
+				if (path === this.plugin.layout.getDashboardPath()) {
+					event.preventDefault();
+					event.stopPropagation();
+				}
+			},
+			{ capture: true },
+		);
+	}
+
+	private patchSort(view: FileExplorerView) {
+		const original = view.getSortedFolderItems;
+
+		if (typeof original !== 'function') {
+			return;
+		}
+
+		const plugin = this.plugin;
+
+		view.getSortedFolderItems = function (folder: TFolder) {
+			const items = original.call(this, folder);
+
+			if (!plugin.settings.pinDashboardFile) {
+				return items;
+			}
+
+			const home = plugin.layout.getDashboardPath();
+			const index = items.findIndex((item) => item.file.path === home);
+
+			if (index > 0) {
+				const [homeItem] = items.splice(index, 1);
+
+				if (homeItem) {
+					items.unshift(homeItem);
+				}
+			}
+
+			return items;
+		};
+
+		view.requestSort?.();
 	}
 }

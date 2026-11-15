@@ -1,7 +1,7 @@
 {
-	"name": "obsidian-sample-plugin",
+	"name": "ob-novel-dashboard",
 	"version": "1.0.0",
-	"description": "This is a sample plugin for Obsidian (https://obsidian.md)",
+	"description": "Novel writing dashboard for Obsidian",
 	"main": "main.js",
 	"type": "module",
 	"scripts": {
